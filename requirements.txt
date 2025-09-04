@@ -3,3 +3,4 @@ uvicorn
 aiosqlite
 python-telegram-bot
 pydantic
+apscheduler
