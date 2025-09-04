@@ -22,11 +22,15 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://dailybot.netlify.app/"],  # frontend origin
+    allow_origins=[
+        "http://localhost:5173",   # local dev
+        "https://dailybot.netlify.app"  # production frontend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ------------------------------
 # Database setup
