@@ -8,15 +8,15 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 from apscheduler.schedulers.background import BackgroundScheduler
 import datetime
 
-from sqlalchemy import create_engine, Column, Integer, String, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, Date
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # ------------------------------
 # Database setup (PostgreSQL)
 # ------------------------------
-DATABASE_URL = "postgresql://task_3csn_user:fQbPuodSxPj7W12IZzf4LsFrCynwj10f@dpg-d2sul9muk2gs73cb5qf0-a/task_3csn"  
-# Replace with your Render PostgreSQL connection string
+# ⚠️ Replace with your own Render PostgreSQL connection string
+DATABASE_URL = "postgresql://task_3csn_user:fQbPuodSxPj7W12IZzf4LsFrCynwj10f@dpg-d2sul9muk2gs73cb5qf0-a.oregon-postgres.render.com:5432/task_3csn?sslmode=require"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -27,7 +27,7 @@ class TaskDB(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    date = Column(String, nullable=False)
+    date = Column(Date, nullable=False)
     done = Column(Boolean, default=False)
 
 
@@ -56,7 +56,7 @@ app.add_middleware(
 # ------------------------------
 class Task(BaseModel):
     title: str
-    date: str
+    date: date
 
 
 class TaskUpdate(BaseModel):
@@ -73,12 +73,12 @@ def get_tasks(for_date=None):
     else:
         rows = db.query(TaskDB).all()
     db.close()
-    return [{"id": r.id, "title": r.title, "date": r.date, "done": r.done} for r in rows]
+    return [{"id": r.id, "title": r.title, "date": r.date.isoformat(), "done": r.done} for r in rows]
 
 
 def add_task(title, date_str):
     db = SessionLocal()
-    task = TaskDB(title=title, date=date_str, done=False)
+    task = TaskDB(title=title, date=datetime.date.fromisoformat(date_str), done=False)
     db.add(task)
     db.commit()
     db.close()
@@ -98,15 +98,17 @@ def toggle_task_status(task_id):
 # ------------------------------
 @app.get("/tasks")
 def list_tasks(date: str = None):
-    return get_tasks(for_date=date)
+    if date:
+        return get_tasks(for_date=datetime.date.fromisoformat(date))
+    return get_tasks()
 
 
 @app.post("/tasks")
 def create_task(task: Task):
-    today = date.today().isoformat()
+    today = date.today()
     if task.date < today:
         raise HTTPException(status_code=400, detail="❌ Cannot add tasks in the past.")
-    add_task(task.title, task.date)
+    add_task(task.title, task.date.isoformat())
     return {"message": "✅ Task added successfully"}
 
 
@@ -138,8 +140,8 @@ def delete_task(task_id: int = Path(..., description="ID of the task to delete")
 # ------------------------------
 # Telegram Bot
 # ------------------------------
-TELEGRAM_TOKEN = "7783968185:AAEso8rgt_5jhA3PgyCV-vbfSC2I0HIrK7g"  # replace with your bot token
-CHAT_ID = "7223100242"  # replace with your Telegram chat ID after /start
+TELEGRAM_TOKEN = "7783968185:AAEso8rgt_5jhA3PgyCV-vbfSC2I0HIrK7g"  # replace
+CHAT_ID = "7223100242"  # replace after using /start
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -166,7 +168,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
+    today_tasks = get_tasks(for_date=date.today())
 
     if not today_tasks:
         await update.message.reply_text("📭 No tasks for today!")
@@ -191,8 +193,7 @@ async def toggle_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task_id = int(query.data.split("_")[1])
     toggle_task_status(task_id)
 
-    today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
+    today_tasks = get_tasks(for_date=date.today())
     keyboard = []
     for t in today_tasks:
         status = "✅" if t["done"] else "⭕"
@@ -209,15 +210,20 @@ async def toggle_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         date_str = context.args[0]
+        try:
+            dt = datetime.date.fromisoformat(date_str)
+        except ValueError:
+            await update.message.reply_text("❌ Invalid date format. Use YYYY-MM-DD")
+            return
     else:
-        date_str = date.today().isoformat()
+        dt = date.today()
 
-    tasks = get_tasks(for_date=date_str)
+    tasks = get_tasks(for_date=dt)
     if not tasks:
-        await update.message.reply_text(f"📭 No tasks for {date_str}")
+        await update.message.reply_text(f"📭 No tasks for {dt.isoformat()}")
         return
 
-    msg = f"📅 Tasks for {date_str}:\n"
+    msg = f"📅 Tasks for {dt.isoformat()}:\n"
     for t in tasks:
         status = "✅" if t["done"] else "⭕"
         msg += f"{status} {t['title']}\n"
@@ -229,8 +235,7 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Notifications
 # ------------------------------
 async def send_task_notifications(app_tg):
-    today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
+    today_tasks = get_tasks(for_date=date.today())
 
     if not today_tasks:
         return
