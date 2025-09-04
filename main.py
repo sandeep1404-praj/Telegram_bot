@@ -22,7 +22,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["dailybot.netlify.app"],  # frontend origin
+    allow_origins=["https://dailybot.netlify.app/"],  # frontend origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
