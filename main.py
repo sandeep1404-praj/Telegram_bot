@@ -87,6 +87,26 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("📅 Today’s Tasks:", reply_markup=reply_markup)
 
+def delete_task(task_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    conn.commit()
+    conn.close()
+
+async def delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /delete <task_id>")
+        return
+    try:
+        task_id = int(context.args[0])
+        delete_task(task_id)
+        await update.message.reply_text(f"🗑️ Task {task_id} deleted successfully.")
+    except ValueError:
+        await update.message.reply_text("❌ Task ID must be a number.")
+
+
+
 async def toggle_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -125,6 +145,7 @@ async def main():
     app_tg.add_handler(CommandHandler("add", add))
     app_tg.add_handler(CommandHandler("list", list_cmd))
     app_tg.add_handler(CommandHandler("today", today_cmd))
+    app_tg.add_handler(CommandHandler("delete", delete))
     app_tg.add_handler(CallbackQueryHandler(toggle_task))
 
     # Scheduler
