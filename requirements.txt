@@ -1,7 +1,6 @@
 fastapi
 uvicorn
-python-telegram-bot
-apscheduler
-databases[postgresql]
-psycopg2-binary
 aiosqlite
+python-telegram-bot
+pydantic
+apscheduler
