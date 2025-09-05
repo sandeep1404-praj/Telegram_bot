@@ -9,6 +9,29 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ------------------------------
+# Data models
+# ------------------------------
+class TaskUpdate(BaseModel):
+    done: bool
+
+class Task(BaseModel):
+    title: str
+    date: str
+
+# ------------------------------
+# FastAPI setup with CORS
+# ------------------------------
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # frontend origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ------------------------------
 # Database setup
 # ------------------------------
 DB_NAME = "tasks.db"
@@ -57,35 +80,8 @@ def toggle_task_status(task_id):
     conn.close()
 
 # ------------------------------
-# FastAPI setup
+# FastAPI endpoints
 # ------------------------------
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # frontend origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ------------------------------
-# FastAPI Models
-# ------------------------------
-class Task(BaseModel):
-    title: str
-    date: str
-
-class TaskUpdate(BaseModel):
-    done: bool
-
-# ------------------------------
-# FastAPI Endpoints
-# ------------------------------
-@app.get("/")
-def root():
-    return {"message": "FastAPI is running!"}
-
 @app.get("/tasks")
 def list_tasks(date: str = None):
     return get_tasks(for_date=date)
@@ -126,6 +122,7 @@ def delete_task(task_id: int = Path(..., description="ID of the task to delete")
 # Telegram Bot
 # ------------------------------
 TELEGRAM_TOKEN = "7783968185:AAEso8rgt_5jhA3PgyCV-vbfSC2I0HIrK7g"
+CHAT_ID = "7223100242"  # replace with your chat_id
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Welcome! Use /add <task> <YYYY-MM-DD> or /today")
@@ -134,6 +131,7 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /add <task> [YYYY-MM-DD]")
         return
+
     possible_date = context.args[-1]
     try:
         date.fromisoformat(possible_date)
@@ -142,27 +140,32 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         title = " ".join(context.args)
         date_str = date.today().isoformat()
+
     add_task(title, date_str)
     await update.message.reply_text(f"✅ Task '{title}' added for {date_str}")
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
-    if not today_tasks:
+    tasks = get_tasks(for_date=today_str)
+    if not tasks:
         await update.message.reply_text("📭 No tasks for today!")
         return
-    keyboard = [[InlineKeyboardButton(f"{'✅' if t['done'] else '⭕'} {t['title']}", callback_data=f"toggle_{t['id']}")] for t in today_tasks]
-    await update.message.reply_text("📅 Today’s Tasks:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    keyboard = [[InlineKeyboardButton(f"{'✅' if t['done'] else '⭕'} {t['title']}", callback_data=f"toggle_{t['id']}")] for t in tasks]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("📅 Today’s Tasks:", reply_markup=reply_markup)
 
 async def toggle_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     task_id = int(query.data.split("_")[1])
     toggle_task_status(task_id)
+
     today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
-    keyboard = [[InlineKeyboardButton(f"{'✅' if t['done'] else '⭕'} {t['title']}", callback_data=f"toggle_{t['id']}")] for t in today_tasks]
-    await query.edit_message_text("📅 Today’s Tasks:", reply_markup=InlineKeyboardMarkup(keyboard))
+    tasks = get_tasks(for_date=today_str)
+    keyboard = [[InlineKeyboardButton(f"{'✅' if t['done'] else '⭕'} {t['title']}", callback_data=f"toggle_{t['id']}")] for t in tasks]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("📅 Today’s Tasks:", reply_markup=reply_markup)
 
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     date_str = context.args[0] if context.args else date.today().isoformat()
@@ -173,20 +176,16 @@ async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"📅 Tasks for {date_str}:\n" + "\n".join([f"{'✅' if t['done'] else '⭕'} {t['title']}" for t in tasks])
     await update.message.reply_text(msg)
 
-# ------------------------------
-# Telegram Notifications
-# ------------------------------
 async def send_task_notifications(app_tg):
     today_str = date.today().isoformat()
-    today_tasks = get_tasks(for_date=today_str)
-    if not today_tasks:
+    tasks = get_tasks(for_date=today_str)
+    if not tasks:
         return
-    chat_id = "7223100242"  # replace with your chat_id
-    msg = "⏰ Reminder! Today’s Tasks:\n" + "\n".join([f"{'✅' if t['done'] else '⭕'} {t['title']}" for t in today_tasks])
-    await app_tg.bot.send_message(chat_id=chat_id, text=msg)
+    msg = "⏰ Reminder! Today’s Tasks:\n" + "\n".join([f"{'✅' if t['done'] else '⭕'} {t['title']}" for t in tasks])
+    await app_tg.bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ------------------------------
-# Run bot async (no threads)
+# Run bot inside FastAPI loop
 # ------------------------------
 async def run_bot():
     app_tg = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -196,16 +195,14 @@ async def run_bot():
     app_tg.add_handler(CommandHandler("today", today_cmd))
     app_tg.add_handler(CallbackQueryHandler(toggle_task))
 
-    # Scheduler for notifications
+    # Scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(lambda: asyncio.create_task(send_task_notifications(app_tg)), "interval", hours=2)
     scheduler.start()
 
-    await app_tg.run_polling()
+    await app_tg.initialize()
+    await app_tg.start()
 
-# ------------------------------
-# FastAPI startup
-# ------------------------------
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(run_bot())
