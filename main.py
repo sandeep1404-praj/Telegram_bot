@@ -1,35 +1,9 @@
-from fastapi import FastAPI, HTTPException, Path
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from datetime import date
 import sqlite3
+from datetime import date
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
-# ------------------------------
-# Data models
-# ------------------------------
-class TaskUpdate(BaseModel):
-    done: bool
-
-class Task(BaseModel):
-    title: str
-    date: str
-
-# ------------------------------
-# FastAPI setup with CORS
-# ------------------------------
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # frontend origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ------------------------------
 # Database setup
@@ -80,49 +54,10 @@ def toggle_task_status(task_id):
     conn.close()
 
 # ------------------------------
-# FastAPI endpoints
-# ------------------------------
-@app.get("/tasks")
-def list_tasks(date: str = None):
-    return get_tasks(for_date=date)
-
-@app.post("/tasks")
-def create_task(task: Task):
-    today = date.today().isoformat()
-    if task.date < today:
-        raise HTTPException(status_code=400, detail="❌ Cannot add tasks in the past.")
-    add_task(task.title, task.date)
-    return {"message": "✅ Task added successfully"}
-
-@app.put("/tasks/{task_id}")
-def update_task(task_id: int, task: TaskUpdate):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("UPDATE tasks SET done=? WHERE id=?", (1 if task.done else 0, task_id))
-    conn.commit()
-    if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Task not found")
-    conn.close()
-    return {"message": "✅ Task updated"}
-
-@app.delete("/tasks/{task_id}")
-def delete_task(task_id: int = Path(..., description="ID of the task to delete")):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-    conn.commit()
-    deleted = c.rowcount
-    conn.close()
-    if deleted == 0:
-        raise HTTPException(status_code=404, detail="❌ Task not found")
-    return {"message": f"🗑️ Task {task_id} deleted successfully"}
-
-# ------------------------------
 # Telegram Bot
 # ------------------------------
 TELEGRAM_TOKEN = "7783968185:AAEso8rgt_5jhA3PgyCV-vbfSC2I0HIrK7g"
-CHAT_ID = "7223100242"  # replace with your chat_id
+CHAT_ID = "7223100242"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 Welcome! Use /add <task> <YYYY-MM-DD> or /today")
@@ -131,7 +66,6 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /add <task> [YYYY-MM-DD]")
         return
-
     possible_date = context.args[-1]
     try:
         date.fromisoformat(possible_date)
@@ -140,7 +74,6 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         title = " ".join(context.args)
         date_str = date.today().isoformat()
-
     add_task(title, date_str)
     await update.message.reply_text(f"✅ Task '{title}' added for {date_str}")
 
@@ -150,7 +83,6 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         await update.message.reply_text("📭 No tasks for today!")
         return
-
     keyboard = [[InlineKeyboardButton(f"{'✅' if t['done'] else '⭕'} {t['title']}", callback_data=f"toggle_{t['id']}")] for t in tasks]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("📅 Today’s Tasks:", reply_markup=reply_markup)
@@ -185,9 +117,9 @@ async def send_task_notifications(app_tg):
     await app_tg.bot.send_message(chat_id=CHAT_ID, text=msg)
 
 # ------------------------------
-# Run bot inside FastAPI loop
+# Main bot runner
 # ------------------------------
-async def run_bot():
+async def main():
     app_tg = Application.builder().token(TELEGRAM_TOKEN).build()
     app_tg.add_handler(CommandHandler("start", start))
     app_tg.add_handler(CommandHandler("add", add))
@@ -200,9 +132,15 @@ async def run_bot():
     scheduler.add_job(lambda: asyncio.create_task(send_task_notifications(app_tg)), "interval", hours=2)
     scheduler.start()
 
+    print("Bot is running...")
     await app_tg.initialize()
     await app_tg.start()
+    await app_tg.updater.start_polling()
+    await asyncio.Event().wait()  # Keep running
 
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(run_bot())
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        print("\nBot stopped gracefully.")
+
